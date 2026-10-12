@@ -10,12 +10,14 @@ import google.generativeai as genai
 app = Flask(__name__)
 app.secret_key = "super_secret_key"
 
-# Gemini API Setup
-api_key = os.environ.get("GEMINI_API_KEY")
+# 1. API Key ကို ရယူပြီး အညစ်အကြေး (Spaces/Quotes) များကို အလိုအလျောက် ရှင်းလင်းခြင်း
+raw_api_key = os.environ.get("GEMINI_API_KEY", "")
+api_key = raw_api_key.strip().strip('"').strip("'")
+
 if api_key:
     genai.configure(api_key=api_key)
 
-# လှပသေသပ်သော အချောထည် UI (Tailwind CSS)
+# 2. လှပသေသပ်သော အချောထည် UI (Tailwind CSS)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -94,7 +96,7 @@ def index():
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if not api_key:
-        return "System Error: GEMINI_API_KEY မထည့်သွင်းရသေးပါ။", 500
+        return "System Error: GEMINI_API_KEY ကို Render Environment တွင် ထည့်သွင်းထားခြင်း မရှိပါ။", 500
 
     if 'video_file' not in request.files:
         return "File မတွေ့ပါ။", 400
@@ -110,13 +112,13 @@ def upload_file():
             
             file.save(video_path)
             
-            # 1. FFmpeg ဖြင့် Audio ခွဲထုတ်ခြင်း 
+            # 3. FFmpeg ဖြင့် Audio ခွဲထုတ်ခြင်း 
             subprocess.run(['ffmpeg', '-i', video_path, '-q:a', '0', '-map', 'a', audio_path, '-y'], check=True)
             
-            # 2. Gemini သို့ Audio file ပို့ခြင်း (mime_type ထည့်သွင်းထားသည်)
+            # 4. Gemini သို့ Audio file ပို့ခြင်း
             audio_file = genai.upload_file(path=audio_path, mime_type="audio/mp3")
             
-            # 3. ဖိုင်ကို AI ဖတ်လို့အသင့်ဖြစ်သည်အထိ စောင့်ရန်
+            # 5. ဖိုင်ကို AI ဖတ်လို့အသင့်ဖြစ်သည်အထိ စောင့်ရန်
             while audio_file.state.name == 'PROCESSING':
                 time.sleep(2)
                 audio_file = genai.get_file(audio_file.name)
@@ -124,7 +126,7 @@ def upload_file():
             if audio_file.state.name == 'FAILED':
                 return "Error: Gemini ဘက်မှ ဖိုင်လက်ခံရရှိမှု မအောင်မြင်ပါ။", 500
 
-            # 4. AI Model သတ်မှတ်ခြင်း (ပိုမိုမြန်ဆန်သော 1.5-flash သို့ ပြောင်းလဲထားသည်)
+            # 6. AI Model သတ်မှတ်ခြင်း (gemini-1.5-flash)
             model = genai.GenerativeModel('gemini-1.5-flash')
             prompt = """
             You are an expert Subtitle Translator. Process the attached audio and generate a full Myanmar subtitle file.
@@ -137,7 +139,7 @@ def upload_file():
             
             response = model.generate_content([prompt, audio_file])
             
-            # 5. SRT ဖိုင်ကို သန့်စင်ပြီး သိမ်းဆည်းခြင်း
+            # 7. SRT ဖိုင်ကို သန့်စင်ပြီး သိမ်းဆည်းခြင်း
             srt_content = response.text.replace("```srt", "").replace("```", "").strip()
             
             final_srt_path = "/tmp/Final_Myanmar_Subtitle.srt" 
@@ -147,11 +149,9 @@ def upload_file():
             return send_file(final_srt_path, as_attachment=True, download_name="Final_Myanmar_Subtitle.srt")
             
     except Exception as e:
-        # Error အတိအကျကို ဖမ်းယူပြီး Website တွင် ပြသပေးမည့်အပိုင်း
         error_details = traceback.format_exc()
         error_message = str(e)
         
-        # Google API HttpError ဖြစ်လျှင် အသေးစိတ်ထုတ်ပြရန်
         if "HttpError" in error_details:
             try:
                 error_content = e.content.decode('utf-8')
@@ -160,11 +160,11 @@ def upload_file():
             except:
                 pass
 
-        print(error_details)
         return f"""
         <div style="font-family: sans-serif; padding: 20px;">
             <h3>စနစ်ချို့ယွင်းမှု ဖြစ်ပွားနေပါသည်</h3>
             <p style="color:red; font-size:18px;"><b>{error_message}</b></p>
+            <p style="color:blue;"><b>အကြံပြုချက်:</b> API Key အဟောင်းမှာ ပြဿနာရှိနေနိုင်ပါသည်။ <a href="[https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)" target="_blank">Google AI Studio</a> မှ API Key အသစ်တစ်ခု ထပ်မံထုတ်ယူပြီး Render ၏ Environment တွင် ပြောင်းလဲထည့်သွင်းပေးပါ။</p>
             <hr>
             <p><b>အသေးစိတ် Error (Traceback):</b></p>
             <pre style="background-color:#f8d7da; padding:15px; border-radius:5px; overflow-x:auto;">{error_details}</pre>
