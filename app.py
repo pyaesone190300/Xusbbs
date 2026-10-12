@@ -127,7 +127,7 @@ def upload_file():
                 return "Error: Gemini ဘက်မှ ဖိုင်လက်ခံရရှိမှု မအောင်မြင်ပါ။", 500
 
             # 4. AI Model သတ်မှတ်ခြင်း (အချောထည်ထွက်ရန် Prompt အတိအကျ)
-            model = genai.GenerativeModel('gemini-1.5-pro')
+            model = genai.GenerativeModel('gemini-3.8-flash')
             prompt = """
             You are an expert Subtitle Translator. Process the attached audio and generate a full Myanmar subtitle file.
             
