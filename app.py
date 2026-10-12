@@ -1,11 +1,13 @@
 import os
 import subprocess
-from flask import Flask, request, render_template_string, send_file, flash, redirect, url_for
-import google.generativeai as genai
 import tempfile
+import traceback
+import time
+from flask import Flask, request, render_template_string, send_file
+import google.generativeai as genai
 
 app = Flask(__name__)
-app.secret_key = "super_secret_key" # Flash messages အတွက်
+app.secret_key = "super_secret_key"
 
 # Gemini API Setup
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -54,7 +56,7 @@ HTML_TEMPLATE = """
             </button>
         </form>
 
-        <!-- Loading UI (Process လုပ်နေစဉ်ပေါ်လာမည်) -->
+        <!-- Loading UI -->
         <div id="loadingUI" class="hidden text-center mt-6">
             <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mx-auto mb-4"></div>
             <h2 class="text-xl font-semibold text-gray-700">ခေတ္တစောင့်ဆိုင်းပါ...</h2>
@@ -107,17 +109,24 @@ def upload_file():
         with tempfile.TemporaryDirectory() as temp_dir:
             video_path = os.path.join(temp_dir, "input_video.mp4")
             audio_path = os.path.join(temp_dir, "extracted_audio.mp3")
-            srt_path = os.path.join(temp_dir, "output.srt")
             
             file.save(video_path)
             
-            # 1. FFmpeg ဖြင့် Audio ခွဲထုတ်ခြင်း (အရည်အသွေးမကျစေဘဲ အမြန်ခွဲထုတ်မည်)
+            # 1. FFmpeg ဖြင့် Audio ခွဲထုတ်ခြင်း 
             subprocess.run(['ffmpeg', '-i', video_path, '-q:a', '0', '-map', 'a', audio_path, '-y'], check=True)
             
             # 2. Gemini သို့ Audio file ပို့ခြင်း
             audio_file = genai.upload_file(path=audio_path)
             
-            # 3. AI Model သတ်မှတ်ခြင်း (အချောထည်ထွက်ရန် Prompt အတိအကျ)
+            # 3. ဖိုင်ကို AI ဖတ်လို့အသင့်ဖြစ်သည်အထိ စောင့်ရန်
+            while audio_file.state.name == 'PROCESSING':
+                time.sleep(2)
+                audio_file = genai.get_file(audio_file.name)
+                
+            if audio_file.state.name == 'FAILED':
+                return "Error: Gemini ဘက်မှ ဖိုင်လက်ခံရရှိမှု မအောင်မြင်ပါ။", 500
+
+            # 4. AI Model သတ်မှတ်ခြင်း (အချောထည်ထွက်ရန် Prompt အတိအကျ)
             model = genai.GenerativeModel('gemini-1.5-pro')
             prompt = """
             You are an expert Subtitle Translator. Process the attached audio and generate a full Myanmar subtitle file.
@@ -130,18 +139,25 @@ def upload_file():
             
             response = model.generate_content([prompt, audio_file])
             
-            # 4. SRT ဖိုင်ကို သန့်စင်ပြီး သိမ်းဆည်းခြင်း (Markdown များကို ဖယ်ရှားရန်)
+            # 5. SRT ဖိုင်ကို သန့်စင်ပြီး သိမ်းဆည်းခြင်း (Markdown များကို ဖယ်ရှားရန်)
             srt_content = response.text.replace("```srt", "").replace("```", "").strip()
             
             # အချောထည် SRT ဖိုင်ကို သိမ်းမည်
-            final_srt_path = "/tmp/Final_Myanmar_Subtitle.srt" # Render တွင် download ရယူရန် /tmp ကိုသုံးပါ
+            final_srt_path = "/tmp/Final_Myanmar_Subtitle.srt" 
             with open(final_srt_path, "w", encoding="utf-8") as f:
                 f.write(srt_content)
                 
             return send_file(final_srt_path, as_attachment=True, download_name="Final_Myanmar_Subtitle.srt")
             
     except Exception as e:
-        return f"Error ဖြစ်ပွားနေပါသည်: {str(e)}", 500
+        # Error အတိအကျကို ဖမ်းယူပြီး Website တွင် ပြသပေးမည့်အပိုင်း
+        error_details = traceback.format_exc()
+        print(error_details)
+        return f"""
+        <h3>Error ဖြစ်ပွားနေပါသည်: {str(e)}</h3>
+        <p><b>အသေးစိတ် Error (Traceback):</b></p>
+        <pre style="background-color:#f8d7da; padding:15px; border-radius:5px; overflow-x:auto;">{error_details}</pre>
+        """, 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
