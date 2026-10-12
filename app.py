@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import traceback
 import time
+import json
 from flask import Flask, request, render_template_string, send_file
 import google.generativeai as genai
 
@@ -14,7 +15,7 @@ api_key = os.environ.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 
-# လှပသေသပ်သော အချောထည် UI (Tailwind CSS အသုံးပြုထားသည်)
+# လှပသေသပ်သော အချောထည် UI (Tailwind CSS)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -35,7 +36,6 @@ HTML_TEMPLATE = """
             <p class="text-gray-600">နိုင်ငံခြားဇာတ်ကားများကို မြန်မာစာတန်းထိုး (.srt) အဖြစ် အလိုအလျောက် ပြောင်းလဲပေးမည့်စနစ်</p>
         </div>
 
-        <!-- File Upload Form -->
         <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data" class="space-y-6">
             <div class="flex items-center justify-center w-full">
                 <label class="flex flex-col w-full h-32 border-4 border-blue-200 border-dashed hover:bg-gray-50 hover:border-blue-300 rounded-lg cursor-pointer transition">
@@ -56,7 +56,6 @@ HTML_TEMPLATE = """
             </button>
         </form>
 
-        <!-- Loading UI -->
         <div id="loadingUI" class="hidden text-center mt-6">
             <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mx-auto mb-4"></div>
             <h2 class="text-xl font-semibold text-gray-700">ခေတ္တစောင့်ဆိုင်းပါ...</h2>
@@ -105,7 +104,6 @@ def upload_file():
         return "File ရွေးချယ်ထားခြင်းမရှိပါ။", 400
 
     try:
-        # Temporary folder ဖြင့် ဖိုင်များကို စနစ်တကျစီမံခြင်း
         with tempfile.TemporaryDirectory() as temp_dir:
             video_path = os.path.join(temp_dir, "input_video.mp4")
             audio_path = os.path.join(temp_dir, "extracted_audio.mp3")
@@ -115,7 +113,7 @@ def upload_file():
             # 1. FFmpeg ဖြင့် Audio ခွဲထုတ်ခြင်း 
             subprocess.run(['ffmpeg', '-i', video_path, '-q:a', '0', '-map', 'a', audio_path, '-y'], check=True)
             
-            # 2. Gemini သို့ Audio file ပို့ခြင်း
+            # 2. Gemini သို့ Audio file ပို့ခြင်း (mime_type ထည့်သွင်းထားသည်)
             audio_file = genai.upload_file(path=audio_path, mime_type="audio/mp3")
             
             # 3. ဖိုင်ကို AI ဖတ်လို့အသင့်ဖြစ်သည်အထိ စောင့်ရန်
@@ -126,8 +124,8 @@ def upload_file():
             if audio_file.state.name == 'FAILED':
                 return "Error: Gemini ဘက်မှ ဖိုင်လက်ခံရရှိမှု မအောင်မြင်ပါ။", 500
 
-            # 4. AI Model သတ်မှတ်ခြင်း (အချောထည်ထွက်ရန် Prompt အတိအကျ)
-            model = genai.GenerativeModel('gemini-3.8-flash')
+            # 4. AI Model သတ်မှတ်ခြင်း (ပိုမိုမြန်ဆန်သော 1.5-flash သို့ ပြောင်းလဲထားသည်)
+            model = genai.GenerativeModel('gemini-1.5-flash')
             prompt = """
             You are an expert Subtitle Translator. Process the attached audio and generate a full Myanmar subtitle file.
             
@@ -139,10 +137,9 @@ def upload_file():
             
             response = model.generate_content([prompt, audio_file])
             
-            # 5. SRT ဖိုင်ကို သန့်စင်ပြီး သိမ်းဆည်းခြင်း (Markdown များကို ဖယ်ရှားရန်)
+            # 5. SRT ဖိုင်ကို သန့်စင်ပြီး သိမ်းဆည်းခြင်း
             srt_content = response.text.replace("```srt", "").replace("```", "").strip()
             
-            # အချောထည် SRT ဖိုင်ကို သိမ်းမည်
             final_srt_path = "/tmp/Final_Myanmar_Subtitle.srt" 
             with open(final_srt_path, "w", encoding="utf-8") as f:
                 f.write(srt_content)
@@ -152,11 +149,26 @@ def upload_file():
     except Exception as e:
         # Error အတိအကျကို ဖမ်းယူပြီး Website တွင် ပြသပေးမည့်အပိုင်း
         error_details = traceback.format_exc()
+        error_message = str(e)
+        
+        # Google API HttpError ဖြစ်လျှင် အသေးစိတ်ထုတ်ပြရန်
+        if "HttpError" in error_details:
+            try:
+                error_content = e.content.decode('utf-8')
+                parsed_error = json.loads(error_content)
+                error_message = f"Google API Error: {parsed_error['error']['code']} - {parsed_error['error']['message']}"
+            except:
+                pass
+
         print(error_details)
         return f"""
-        <h3>Error ဖြစ်ပွားနေပါသည်: {str(e)}</h3>
-        <p><b>အသေးစိတ် Error (Traceback):</b></p>
-        <pre style="background-color:#f8d7da; padding:15px; border-radius:5px; overflow-x:auto;">{error_details}</pre>
+        <div style="font-family: sans-serif; padding: 20px;">
+            <h3>စနစ်ချို့ယွင်းမှု ဖြစ်ပွားနေပါသည်</h3>
+            <p style="color:red; font-size:18px;"><b>{error_message}</b></p>
+            <hr>
+            <p><b>အသေးစိတ် Error (Traceback):</b></p>
+            <pre style="background-color:#f8d7da; padding:15px; border-radius:5px; overflow-x:auto;">{error_details}</pre>
+        </div>
         """, 500
 
 if __name__ == '__main__':
