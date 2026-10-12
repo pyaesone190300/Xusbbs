@@ -116,7 +116,7 @@ def upload_file():
             subprocess.run(['ffmpeg', '-i', video_path, '-q:a', '0', '-map', 'a', audio_path, '-y'], check=True)
             
             # 2. Gemini သို့ Audio file ပို့ခြင်း
-            audio_file = genai.upload_file(path=audio_path)
+            audio_file = genai.upload_file(path=audio_path, mime_type="audio/mp3")
             
             # 3. ဖိုင်ကို AI ဖတ်လို့အသင့်ဖြစ်သည်အထိ စောင့်ရန်
             while audio_file.state.name == 'PROCESSING':
